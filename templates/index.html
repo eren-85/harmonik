@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Harmonic Pattern Scanner</title>
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh; padding: 20px; 
+        }
+        .container { 
+            max-width: 1600px; margin: 0 auto; background: white; 
+            border-radius: 15px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%); 
+            color: white; padding: 20px; text-align: center; 
+        }
+        .controls { 
+            background: #f8f9fa; padding: 20px; border-bottom: 1px solid #e9ecef; 
+        }
+        .control-group { 
+            display: flex; gap: 15px; align-items: center; flex-wrap: wrap; margin-bottom: 15px; 
+        }
+        .control-item { display: flex; flex-direction: column; gap: 5px; }
+        label { font-weight: 600; color: #495057; font-size: 14px; }
+        input, select, button { 
+            padding: 10px 15px; border: 2px solid #e9ecef; border-radius: 8px; 
+            font-size: 14px; background: white; cursor: pointer; transition: all 0.3s ease; 
+        }
+        input:focus, select:focus, button:hover { border-color: #3498db; outline: none; }
+        button { 
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white; 
+            border: none; font-weight: 600; min-width: 120px; 
+        }
+        button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3); }
+        .content { display: grid; grid-template-columns: 1fr 450px; height: 75vh; }
+        .chart-container { position: relative; padding: 20px; }
+        #chart { width: 100%; height: 100%; border-radius: 10px; background: white; }
+        .patterns-sidebar { 
+            background: #f8f9fa; padding: 20px; overflow-y: auto; border-left: 1px solid #e9ecef; 
+        }
+        .patterns-header { 
+            display: flex; justify-content: space-between; align-items: center; 
+            margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #e9ecef; 
+        }
+        .pattern-count { 
+            background: #3498db; color: white; padding: 5px 10px; 
+            border-radius: 20px; font-size: 14px; font-weight: 600; 
+        }
+        .pattern-list { display: flex; flex-direction: column; gap: 15px; }
+        .pattern-item { 
+            background: white; border-radius: 10px; padding: 15px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-left: 4px solid #3498db; 
+            transition: all 0.3s ease; cursor: pointer; 
+        }
+        .pattern-item:hover { transform: translateX(5px); box-shadow: 0 5px 20px rgba(0,0,0,0.15); }
+        .pattern-item.bullish { border-left-color: #27ae60; }
+        .pattern-item.bearish { border-left-color: #e74c3c; }
+        .pattern-name { 
+            font-weight: 700; color: #2c3e50; margin-bottom: 5px; 
+            display: flex; justify-content: space-between; align-items: center; 
+        }
+        .pattern-type { 
+            font-size: 12px; padding: 3px 8px; border-radius: 12px; color: white; font-weight: 600; 
+        }
+        .pattern-type.bullish { background: #27ae60; }
+        .pattern-type.bearish { background: #e74c3c; }
+        .pattern-status {
+            font-size: 11px; padding: 2px 6px; border-radius: 8px; margin-left: 5px;
+        }
+        .status-waiting { background: #3498db; color: white; }
+        .status-active { background: #27ae60; color: white; }
+        .status-completed { background: #95a5a6; color: white; }
+        .status-stopped { background: #e74c3c; color: white; }
+        .pattern-description {
+            font-size: 11px; color: #6c757d; margin-bottom: 8px; font-style: italic;
+        }
+        .pattern-strength {
+            font-size: 11px; color: #495057; margin-bottom: 8px;
+        }
+        .strength-bar {
+            width: 100%; height: 4px; background: #e9ecef; border-radius: 2px; margin-top: 2px;
+        }
+        .strength-fill {
+            height: 100%; border-radius: 2px; transition: width 0.3s ease;
+        }
+        .strength-high { background: #27ae60; }
+        .strength-medium { background: #f39c12; }
+        .strength-low { background: #e74c3c; }
+        .pattern-points { font-size: 11px; color: #7f8c8d; margin: 8px 0; }
+        .pattern-ratios { 
+            font-size: 10px; color: #95a5a6; 
+            display: grid; grid-template-columns: 1fr 1fr; gap: 4px; 
+            margin-bottom: 8px;
+        }
+        .ratio-item {
+            display: flex; justify-content: space-between;
+        }
+        .trading-levels {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 8px;
+            font-size: 11px;
+        }
+        .level-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 3px;
+        }
+        .level-label {
+            font-weight: 600;
+            color: #495057;
+        }
+        .level-value {
+            color: #212529;
+        }
+        .level-value.positive { color: #27ae60; }
+        .level-value.negative { color: #e74c3c; }
+        .rr-ratio {
+            font-size: 10px; padding: 1px 4px; border-radius: 3px; margin-left: 5px;
+        }
+        .rr-good { background: #d4edda; color: #155724; }
+        .rr-poor { background: #f8d7da; color: #721c24; }
+        .status-bar { 
+            background: #2c3e50; color: white; padding: 10px 20px; 
+            display: flex; justify-content: space-between; align-items: center; font-size: 14px; 
+        }
+        .price-info { font-weight: 600; color: #3498db; }
+        .last-update { color: #bdc3c7; }
+        .loading { display: none; text-align: center; padding: 20px; color: #7f8c8d; }
+        .loading.spinner { 
+            border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; 
+            width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 10px; 
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .error { color: #e74c3c; text-align: center; padding: 20px; }
+        .no-patterns { text-align: center; color: #7f8c8d; padding: 40px 20px; }
+        .chart-title {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255,255,255,0.9);
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: 600;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Advanced Harmonic Pattern Scanner</h1>
+            <p>Active harmonic pattern detection with real-time analysis</p>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <div class="control-item">
+                    <label for="symbol">Symbol (BTCUSDT, ETH, ADA, etc.):</label>
+                    <input type="text" id="symbol" value="BTCUSDT" placeholder="Enter symbol...">
+                </div>
+                
+                <div class="control-item">
+                    <label for="timeframe">Timeframe:</label>
+                    <select id="timeframe">
+                        <option value="1m">1 Minute</option>
+                        <option value="5m">5 Minutes</option>
+                        <option value="15m">15 Minutes</option>
+                        <option value="30m">30 Minutes</option>
+                        <option value="1h" selected>1 Hour</option>
+                        <option value="4h">4 Hours</option>
+                        <option value="1d">1 Day</option>
+                        <option value="1w">1 Week</option>
+                    </select>
+                </div>
+                
+                <div class="control-item">
+                    <label>&nbsp;</label>
+                    <button onclick="analyze()" id="analyzeBtn">🔍 Analyze Patterns</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="content">
+            <div class="chart-container">
+                <div class="chart-title" id="chartTitle">BTCUSDT - 1h</div>
+                <div id="chart"></div>
+            </div>
+            
+            <div class="patterns-sidebar">
+                <div class="patterns-header">
+                    <h3>Active Patterns</h3>
+                    <div class="pattern-count" id="patternCount">0</div>
+                </div>
+                
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <div>Scanning for active patterns...</div>
+                </div>
+                
+                <div class="pattern-list" id="patternList">
+                    <div class="no-patterns">
+                        Select symbol and timeframe, then click Analyze
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="status-bar">
+            <div class="price-info">
+                Current Price: <span id="currentPrice">-</span>
+            </div>
+            <div class="last-update">
+                Last Update: <span id="lastUpdate">-</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chart = null;
+        let candleSeries = null;
+        let patternSeries = [];
+        let priceLines = [];
+        
+        // Chart initialization
+        function initChart() {
+            const chartContainer = document.getElementById('chart');
+            chart = LightweightCharts.createChart(chartContainer, {
+                width: chartContainer.clientWidth,
+                height: chartContainer.clientHeight,
+                layout: {
+                    background: { color: '#ffffff' },
+                    textColor: '#333333',
+                },
+                grid: {
+                    vertLines: { color: '#f0f0f0' },
+                    horzLines: { color: '#f0f0f0' },
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+                rightPriceScale: {
+                    borderColor: '#f0f0f0',
+                },
+                timeScale: {
+                    borderColor: '#f0f0f0',
+                    timeVisible: true,
+                    secondsVisible: false,
+                },
+            });
+            
+            candleSeries = chart.addCandlestickSeries({
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderDownColor: '#ef5350',
+                borderUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+                wickUpColor: '#26a69a',
+            });
+        }
+        
+        // Clear pattern lines
+        function clearPatterns() {
+            patternSeries.forEach(series => {
+                try {
+                    chart.removeSeries(series);
+                } catch (e) {
+                    console.warn('Error removing series:', e);
+                }
+            });
+            patternSeries = [];
+            
+            // PriceLine'ları temizle
+            if (candleSeries) {
+                priceLines.forEach(priceLine => {
+                    try {
+                        candleSeries.removePriceLine(priceLine);
+                    } catch (e) {
+                        console.warn('Error removing price line:', e);
+                    }
+                });
+            }
+            priceLines = [];
+        }
+        
+        // Update chart with data
+        function updateChart(chartData, symbol, timeframe) {
+            if (!candleSeries) return;
+            
+            // Clear previous data and patterns
+            candleSeries.setData([]);
+            clearPatterns();
+            
+            // Zaman değerlerini milisaniyeye çevir (Lightweight Charts için)
+            const candlestickData = chartData.map(item => ({
+                time: item.time,
+                open: item.open,
+                high: item.high,
+                low: item.low,
+                close: item.close,
+            }));
+            
+            candleSeries.setData(candlestickData);
+            chart.timeScale().fitContent();
+            
+            // Update chart title
+            document.getElementById('chartTitle').textContent = `${symbol} - ${timeframe}`;
+        }
+        
+        // Draw harmonic pattern
+        function drawPattern(pattern) {
+            if (!chart) return;
+            
+            // Mevcut pattern çizimlerini temizle
+            clearPatterns();
+            
+            const points = pattern.points;
+            const isBullish = pattern.type === 'BULLISH';
+            const lineColor = isBullish ? '#27ae60' : '#e74c3c';
+            
+            // Zaman değerlerini kontrol et
+            const lineData = [
+                { time: points.X.time, value: points.X.value },
+                { time: points.A.time, value: points.A.value },
+                { time: points.B.time, value: points.B.value },
+                { time: points.C.time, value: points.C.value },
+                { time: points.D.time, value: points.D.value },
+            ].filter(point => point.time && point.value); // Geçersiz noktaları filtrele
+            
+            if (lineData.length < 2) {
+                console.warn('Yeterli veri noktası yok:', pattern.name);
+                return;
+            }
+            
+            // Draw XABCD lines
+            const patternLine = chart.addLineSeries({
+                color: lineColor,
+                lineWidth: 2,
+                lineStyle: 0,
+            });
+            
+            patternLine.setData(lineData);
+            patternSeries.push(patternLine);
+            
+            // Draw trading levels
+            drawTradingLevels(pattern.trading_levels, isBullish, lineData);
+        }
+        
+        // Draw trading levels
+        function drawTradingLevels(levels, isBullish, patternLineData = null) {
+            if (!levels || !chart || !candleSeries) return;
+            
+            const colors = {
+                entry: '#3498db',
+                stop_loss: '#e74c3c',
+                tp1: '#27ae60',
+                tp2: '#f39c12',
+                tp3: '#9b59b6'
+            };
+            
+            const labels = {
+                entry: 'Entry',
+                stop_loss: 'Stop',
+                tp1: 'TP1',
+                tp2: 'TP2',
+                tp3: 'TP3'
+            };
+            
+            // Zaman aralığını belirle
+            let timeRange;
+            if (patternLineData && patternLineData.length > 0) {
+                const times = patternLineData.map(d => d.time).filter(t => t);
+                timeRange = {
+                    from: Math.min(...times),
+                    to: Math.max(...times)
+                };
+            } else {
+                timeRange = chart.timeScale().getVisibleRange();
+                if (!timeRange) {
+                    console.warn('Zaman aralığı belirlenemedi');
+                    return;
+                }
+            }
+            
+            // Trading seviyelerini sıralı şekilde çiz (TP'ler doğru sırada olsun)
+            const levelOrder = ['entry', 'stop_loss', 'tp1', 'tp2', 'tp3'];
+            
+            levelOrder.forEach(key => {
+                const value = levels[key];
+                if (value && value > 0) {
+                    // Kesikli çizgi çiz
+                    const line = chart.addLineSeries({
+                        color: colors[key],
+                        lineWidth: 1,
+                        lineStyle: 2, // Dashed line
+                    });
+                    
+                    const lineData = [
+                        { time: timeRange.from, value: value },
+                        { time: timeRange.to, value: value }
+                    ];
+                    
+                    line.setData(lineData);
+                    patternSeries.push(line);
+                    
+                    // PriceLine ile label ekle (sağ tarafta görünecek)
+                    const priceLine = candleSeries.createPriceLine({
+                        price: value,
+                        color: colors[key],
+                        lineWidth: 1,
+                        lineStyle: 2,
+                        axisLabelVisible: true,
+                        title: labels[key],
+                    });
+                    priceLines.push(priceLine);
+                }
+            });
+        }
+        
+        // Analyze function
+        async function analyze() {
+            const symbol = document.getElementById('symbol').value;
+            const timeframe = document.getElementById('timeframe').value;
+            
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('patternList').innerHTML = '';
+            
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol, timeframe })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                if (result.error) {
+                    throw new Error(result.error);
+                }
+                
+                displayResults(result);
+            } catch (error) {
+                console.error('Analysis error:', error);
+                document.getElementById('patternList').innerHTML = 
+                    '<div class="error">Error: ' + error.message + '</div>';
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+        
+        // Display results
+        function displayResults(result) {
+            try {
+                // Update chart
+                if (result.chart_data && result.chart_data.length > 0) {
+                    updateChart(result.chart_data, result.symbol, result.timeframe);
+                } else {
+                    console.warn('Chart verisi yok');
+                }
+                
+                // Update status
+                document.getElementById('currentPrice').textContent = result.current_price?.toFixed(4) || '-';
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
+                document.getElementById('patternCount').textContent = result.patterns_count || 0;
+                
+                // Display patterns
+                const patternList = document.getElementById('patternList');
+                patternList.innerHTML = '';
+                
+                if (!result.patterns || result.patterns.length === 0) {
+                    patternList.innerHTML = '<div class="no-patterns">No active patterns found</div>';
+                    return;
+                }
+                
+                result.patterns.forEach((pattern, index) => {
+                    try {
+                        const patternItem = document.createElement('div');
+                        patternItem.className = `pattern-item ${pattern.type.toLowerCase()}`;
+                        patternItem.onclick = () => {
+                            try {
+                                drawPattern(pattern);
+                            } catch (e) {
+                                console.error('Pattern çizim hatası:', e);
+                                alert('Pattern çizilemedi: ' + e.message);
+                            }
+                        };
+                        
+                        const levels = pattern.trading_levels || {};
+                        const strength = pattern.strength || 0;
+                        const strengthClass = strength >= 70 ? 'strength-high' : strength >= 40 ? 'strength-medium' : 'strength-low';
+                        const status = pattern.status || 'WAITING_ENTRY';
+                        const statusClass = status === 'WAITING_ENTRY' ? 'status-waiting' : 
+                                          status === 'IN_TRADE' ? 'status-active' : 
+                                          status === 'STOPPED_OUT' ? 'status-stopped' : 'status-completed';
+                        const statusText = status === 'WAITING_ENTRY' ? 'Waiting Entry' :
+                                         status === 'IN_TRADE' ? 'In Trade' :
+                                         status === 'STOPPED_OUT' ? 'Stopped Out' : 'Completed';
+                        
+                        // Pattern noktalarını güvenli şekilde al
+                        const points = pattern.points || {};
+                        const X = points.X || { value: 0 };
+                        const A = points.A || { value: 0 };
+                        const B = points.B || { value: 0 };
+                        const C = points.C || { value: 0 };
+                        const D = points.D || { value: 0 };
+                        const ratios = pattern.ratios || {};
+                        
+                        patternItem.innerHTML = `
+                            <div class="pattern-name">
+                                ${pattern.name || 'Unknown Pattern'}
+                                <div>
+                                    <span class="pattern-type ${pattern.type.toLowerCase()}">${pattern.type}</span>
+                                    <span class="pattern-status ${statusClass}">${statusText}</span>
+                                </div>
+                            </div>
+                            <div class="pattern-description">${pattern.description || ''}</div>
+                            <div class="pattern-strength">
+                                Strength: ${strength.toFixed(0)}%
+                                <div class="strength-bar">
+                                    <div class="strength-fill ${strengthClass}" style="width: ${strength}%"></div>
+                                </div>
+                            </div>
+                            <div class="pattern-points">
+                                X:${X.value.toFixed(4)} → 
+                                A:${A.value.toFixed(4)} → 
+                                B:${B.value.toFixed(4)} → 
+                                C:${C.value.toFixed(4)} → 
+                                D:${D.value.toFixed(4)}
+                            </div>
+                            <div class="pattern-ratios">
+                                <div class="ratio-item">
+                                    <span>AB:</span>
+                                    <span>${ratios.AB?.toFixed(3) || '-'}</span>
+                                </div>
+                                <div class="ratio-item">
+                                    <span>BC:</span>
+                                    <span>${ratios.BC?.toFixed(3) || '-'}</span>
+                                </div>
+                                <div class="ratio-item">
+                                    <span>CD:</span>
+                                    <span>${ratios.CD?.toFixed(3) || '-'}</span>
+                                </div>
+                                <div class="ratio-item">
+                                    <span>XD:</span>
+                                    <span>${ratios.XD?.toFixed(3) || '-'}</span>
+                                </div>
+                            </div>
+                            <div class="trading-levels">
+                                <div class="level-row">
+                                    <span class="level-label">Entry:</span>
+                                    <span class="level-value">${levels.entry || '-'}</span>
+                                </div>
+                                <div class="level-row">
+                                    <span class="level-label">Stop Loss:</span>
+                                    <span class="level-value">${levels.stop_loss || '-'}</span>
+                                </div>
+                                <div class="level-row">
+                                    <span class="level-label">TP1:</span>
+                                    <span class="level-value">${levels.tp1 || '-'}</span>
+                                    <span class="rr-ratio ${(levels.risk_reward_1 || 0) >= 1 ? 'rr-good' : 'rr-poor'}">RR: ${levels.risk_reward_1 || '0'}</span>
+                                </div>
+                                <div class="level-row">
+                                    <span class="level-label">TP2:</span>
+                                    <span class="level-value">${levels.tp2 || '-'}</span>
+                                    <span class="rr-ratio ${(levels.risk_reward_2 || 0) >= 1.5 ? 'rr-good' : 'rr-poor'}">RR: ${levels.risk_reward_2 || '0'}</span>
+                                </div>
+                                <div class="level-row">
+                                    <span class="level-label">TP3:</span>
+                                    <span class="level-value">${levels.tp3 || '-'}</span>
+                                    <span class="rr-ratio ${(levels.risk_reward_3 || 0) >= 2 ? 'rr-good' : 'rr-poor'}">RR: ${levels.risk_reward_3 || '0'}</span>
+                                </div>
+                                <div class="level-row">
+                                    <span class="level-label">Distance to Entry:</span>
+                                    <span class="level-value ${(levels.distance_to_entry_pct || 0) > 5 ? 'negative' : 'positive'}">${levels.distance_to_entry_pct || '-'}%</span>
+                                </div>
+                            </div>
+                        `;
+                        
+                        patternList.appendChild(patternItem);
+                    } catch (e) {
+                        console.error('Pattern display error:', e);
+                    }
+                });
+                
+                // Draw first pattern by default
+                if (result.patterns.length > 0) {
+                    try {
+                        drawPattern(result.patterns[0]);
+                    } catch (e) {
+                        console.error('Default pattern çizim hatası:', e);
+                    }
+                }
+            } catch (error) {
+                console.error('Results display error:', error);
+                document.getElementById('patternList').innerHTML = 
+                    '<div class="error">Error displaying results: ' + error.message + '</div>';
+            }
+        }
+        
+        // Initialize
+        window.addEventListener('load', () => {
+            initChart();
+            // Auto-analyze on load
+            setTimeout(() => analyze(), 1000);
+        });
+        
+        // Handle resize
+        window.addEventListener('resize', () => {
+            if (chart) {
+                const chartContainer = document.getElementById('chart');
+                chart.applyOptions({
+                    width: chartContainer.clientWidth,
+                    height: chartContainer.clientHeight,
+                });
+            }
+        });
+    </script>
+</body>
+</html>
