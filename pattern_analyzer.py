@@ -10,17 +10,17 @@ class HarmonicPatternAnalyzer:
         self.data = data
         self.results = {}
         
-    def analyze_multiple_sigmas(self, sigmas=None, err_threshold=0.2):
+    def analyze_multiple_sigmas(self, sigmas=None, err_threshold=0.2, max_pattern_bars=50):
         """Birden fazla sigma değeri için analiz yapar"""
         if sigmas is None:
             sigmas = [0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04]
-            
+
         all_combined = np.zeros(len(self.data))
-        
+
         for sigma in sigmas:
             print(f"Processing sigma: {sigma}")
             extremes = get_extremes(self.data, sigma)
-            output = find_xabcd(self.data, extremes, err_threshold)
+            output = find_xabcd(self.data, extremes, err_threshold, max_pattern_bars)
             
             sig = np.zeros(len(self.data))
             for pat in ALL_PATTERNS:
@@ -68,10 +68,10 @@ class HarmonicPatternAnalyzer:
         plt.tight_layout()
         plt.show()
     
-    def pattern_performance_analysis(self, sigma=0.02, err_threshold=0.2):
+    def pattern_performance_analysis(self, sigma=0.02, err_threshold=0.2, max_pattern_bars=50):
         """Pattern bazlı performans analizi"""
         extremes = get_extremes(self.data, sigma)
-        output = find_xabcd(self.data, extremes, err_threshold)
+        output = find_xabcd(self.data, extremes, err_threshold, max_pattern_bars)
         
         results = []
         for pat in ALL_PATTERNS:

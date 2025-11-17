@@ -119,11 +119,11 @@ def get_error(actual_ratio: float, pattern_ratio: Union[float, list, None]):
         raise TypeError("Invalid pattern ratio type")
 
 
-def find_xabcd(ohlc: pd.DataFrame, extremes: pd.DataFrame, err_thresh: float = 0.2):
-    
+def find_xabcd(ohlc: pd.DataFrame, extremes: pd.DataFrame, err_thresh: float = 0.2, max_pattern_bars: int = 50):
+
     extremes['seg_height'] = (extremes['ext_p'] - extremes['ext_p'].shift(1)).abs()
-    extremes['retrace_ratio'] = extremes['seg_height'] / extremes['seg_height'].shift(1) 
-    
+    extremes['retrace_ratio'] = extremes['seg_height'] / extremes['seg_height'].shift(1)
+
     output = {}
     for pat in ALL_PATTERNS:
         pat_data = {}
@@ -132,22 +132,54 @@ def find_xabcd(ohlc: pd.DataFrame, extremes: pd.DataFrame, err_thresh: float = 0
         pat_data['bear_signal'] = np.zeros(len(ohlc))
         pat_data['bear_patterns'] = []
         output[pat.name] = pat_data
-    
+
     first_conf = extremes.index[0]
     extreme_i = 0
-        
+
     entry_taken = 0
     pattern_used = None
+    entry_bar = 0
+    entry_price = 0
+    stop_price = 0
+    target_price = 0
+
     for i in range(first_conf, len(ohlc)):
-        
+
         if extremes.index[extreme_i + 1] == i:
-            entry_taken = 0
             extreme_i += 1
-        
+
+        # Aktif pattern varsa kontrol et
         if entry_taken != 0:
-            if entry_taken == 1:
+            # Maksimum süre aşıldı mı kontrol et
+            if i - entry_bar > max_pattern_bars:
+                entry_taken = 0
+                pattern_used = None
+                continue
+
+            # Stop kontrolü
+            if entry_taken == 1:  # Bull pattern
+                if ohlc.iloc[i]['low'] < stop_price:
+                    entry_taken = 0
+                    pattern_used = None
+                    continue
+                # Target kontrolü
+                if ohlc.iloc[i]['high'] >= target_price:
+                    output[pattern_used]['bull_signal'][i] = 1
+                    entry_taken = 0
+                    pattern_used = None
+                    continue
                 output[pattern_used]['bull_signal'][i] = 1
-            else:
+            else:  # Bear pattern
+                if ohlc.iloc[i]['high'] > stop_price:
+                    entry_taken = 0
+                    pattern_used = None
+                    continue
+                # Target kontrolü
+                if ohlc.iloc[i]['low'] <= target_price:
+                    output[pattern_used]['bear_signal'][i] = -1
+                    entry_taken = 0
+                    pattern_used = None
+                    continue
                 output[pattern_used]['bear_signal'][i] = -1
             continue
         
@@ -195,25 +227,51 @@ def find_xabcd(ohlc: pd.DataFrame, extremes: pd.DataFrame, err_thresh: float = 0
         
         if best_err <= err_thresh:
             pattern_data = XABCDFound(
-                    int(extremes.iloc[extreme_i - 3]['ext_i']), 
-                    int(extremes.iloc[extreme_i - 2]['ext_i']), 
-                    int(extremes.iloc[extreme_i - 1]['ext_i']), 
-                    int(extremes.iloc[extreme_i]['ext_i']), 
-                    i, 
+                    int(extremes.iloc[extreme_i - 3]['ext_i']),
+                    int(extremes.iloc[extreme_i - 2]['ext_i']),
+                    int(extremes.iloc[extreme_i - 1]['ext_i']),
+                    int(extremes.iloc[extreme_i]['ext_i']),
+                    i,
                     best_err, best_pat, True
             )
 
             pattern_used = best_pat
-            if ext_type > 0.0:
+            entry_bar = i
+
+            if ext_type > 0.0:  # Bull pattern
                 entry_taken = 1
                 pattern_data.name = "Bull" + pattern_data.name
                 pattern_data.bull = True
+
+                # Entry: D noktasındaki fiyat
+                entry_price = D_price
+
+                # Stop: X noktasının biraz altı (bull için)
+                X_price = extremes.iloc[extreme_i - 3]['ext_p']
+                stop_price = X_price * 0.99  # %1 altı
+
+                # Target: C noktası (ilk hedef)
+                C_price = extremes.iloc[extreme_i]['ext_p']
+                target_price = C_price
+
                 output[pattern_used]['bull_signal'][i] = 1
                 output[pattern_used]['bull_patterns'].append(pattern_data)
-            else:
+            else:  # Bear pattern
                 entry_taken = -1
                 pattern_data.name = "Bear" + pattern_data.name
                 pattern_data.bull = False
+
+                # Entry: D noktasındaki fiyat
+                entry_price = D_price
+
+                # Stop: X noktasının biraz üstü (bear için)
+                X_price = extremes.iloc[extreme_i - 3]['ext_p']
+                stop_price = X_price * 1.01  # %1 üstü
+
+                # Target: C noktası (ilk hedef)
+                C_price = extremes.iloc[extreme_i]['ext_p']
+                target_price = C_price
+
                 output[pattern_used]['bear_signal'][i] = -1
                 output[pattern_used]['bear_patterns'].append(pattern_data)
 
