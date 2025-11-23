@@ -1,0 +1,562 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TradingView - Modified with Divergence Detection
+
+//@version=5
+indicator("CVD - Cumulative Volume Delta with Divergences", "CVD Divergences", format = format.volume, overlay = false, max_lines_count = 500, max_labels_count = 500)
+
+// CVD - Cumulative Volume Delta Candles with Divergence Detection
+// Original v7, 2023.03.25 - Modified for divergence detection
+
+import PineCoders/Time/4 as PCtime
+import PineCoders/lower_tf/4 as PCltf
+import TradingView/ta/4 as TVta
+
+
+
+//#region ———————————————————— Constants and Inputs
+
+
+// ————— Constants
+
+int     MS_IN_MIN   = 60 * 1000
+int     MS_IN_HOUR  = MS_IN_MIN  * 60
+int     MS_IN_DAY   = MS_IN_HOUR * 24
+
+// Default colors
+color   GRAY        = #808080ff
+color   LIME        = #00FF00ff
+color   MAROON      = #800000ff
+color   ORANGE      = #FF8000ff
+color   PINK        = #FF0080ff
+color   TEAL        = #008080ff
+color   BG_DIV      = color.new(ORANGE, 90)
+color   BG_RESETS   = color.new(GRAY, 90)
+
+// Divergence colors
+color   BULL_DIV_COLOR      = #00E676  // Green for bullish divergence
+color   BEAR_DIV_COLOR      = #FF5252  // Red for bearish divergence
+color   HIDDEN_BULL_COLOR   = #00BCD4  // Cyan for hidden bullish
+color   HIDDEN_BEAR_COLOR   = #FF9800  // Orange for hidden bearish
+
+// Reset conditions
+string  RST1 = "None"
+string  RST2 = "On a stepped higher timeframe"
+string  RST3 = "On a fixed higher timeframe..."
+string  RST4 = "At a fixed time..."
+string  RST5 = "At the beginning of the regular session"
+string  RST6 = "At the first visible chart bar"
+string  RST7 = "On trend changes..."
+
+// Trends
+string  TR01 = "Supertrend"
+string  TR02 = "Aroon"
+string  TR03 = "Parabolic SAR"
+
+// Volume Delta calculation mode
+string  VD01 = "Volume Delta"
+string  VD02 = "Volume Delta Percent"
+
+// Intrabar precisions
+string LTF1  = "Covering most chart bars (least precise)"
+string LTF2  = "Covering some chart bars (less precise)"
+string LTF3  = "Covering less chart bars (more precise)"
+string LTF4  = "Covering few chart bars (very precise)"
+string LTF5  = "Covering the least chart bars (most precise)"
+string LTF6  = "~12 intrabars per chart bar"
+string LTF7  = "~24 intrabars per chart bar"
+string LTF8  = "~50 intrabars per chart bar"
+string LTF9  = "~100 intrabars per chart bar"
+string LTF10 = "~250 intrabars per chart bar"
+
+// Tooltips
+string TT_RST       = "This is where you specify how you want the cumulative volume delta to reset.
+  If you select one of the last three choices, you must also specify the relevant additional information below."
+string TT_RST_HTF   = "This value only matters when '" + RST3 +"' is selected."
+string TT_RST_TIME  = "Hour: 0-23\nMinute: 0-59\nThese values only matter when '" + RST4 +"' is selected.
+  A reset will occur when the time is greater or equal to the bar's open time, and less than its close time."
+string TT_RST_TREND = "These values only matter when '" + RST7 +"' is selected.\n
+  For Supertrend, the first value is the length of ATR, the second is the factor. For Aroon, the first value is the lookback length."
+string TT_TOTVOL    = "Total volume can only be displayed when '" + VD01 +"' is selected as the Volume Delta Calculation mode.\n\n
+  The 'Bodies' value is the transparency of the total volume candle bodies. Zero is opaque, 100 is transparent."
+string TT_LINE      = "This plots a line at the `close` values of the CVD candles. You can use it instead of the CVD candles."
+string TT_LTF       = "Your selection here controls how many intrabars will be analyzed for each chart bar.
+  The more intrabars you analyze, the more precise the calculations will be,
+  but the less chart bars will be covered by the indicator's calculations because a maximum of 100K intrabars can be analyzed.\n\n
+  The first five choices determine the lower timeframe used for intrabars using how much chart coverage you want.
+  The last five choices allow you to select approximately how many intrabars you want analyzed per chart bar."
+string TT_MA        = "This plots the running average of CVD from its last reset. The 'Length' period only applies when CVD does not reset, i.e., the reset is 'None'."
+string TT_DIV       = "Pivot detection lookback period. Higher values find more significant pivots but may miss short-term divergences."
+
+
+// ————— Inputs
+
+string  resetInput              = input.string(RST2,        "CVD Resets",                       inline = "00", options = [RST1, RST2, RST5, RST6, RST3, RST4, RST7], tooltip = TT_RST)
+string  fixedTfInput            = input.timeframe("D",      "  Fixed higher timeframe:",        tooltip = TT_RST_HTF)
+int     hourInput               = input.int(9,              "  Fixed time: Hour",               inline = "01", minval = 0, maxval = 23)
+int     minuteInput             = input.int(30,             "Minute",                           inline = "01", minval = 0, maxval = 59, tooltip = TT_RST_TIME)
+string  trendInput              = input.string(TR01,        "  Trend: ",                        inline = "02", options = [TR02, TR03, TR01])
+int     trendPeriodInput        = input.int(14,             " Length",                          inline = "02", minval = 2)
+float   trendValue2Input        = input.float(3.0,          "",                                 inline = "02", minval = 0.25, step = 0.25, tooltip = TT_RST_TREND)
+string  ltfModeInput            = input.string(LTF3,        "Intrabar precision",               inline = "03", options = [LTF1, LTF2, LTF3, LTF4, LTF5, LTF6, LTF7, LTF8, LTF9, LTF10], tooltip = TT_LTF)
+string  vdCalcModeInput         = input.string(VD01,        "Volume Delta Calculation",         inline = "04", options = [VD01, VD02])
+
+string  GRP1 = "Visuals"
+bool    showCandlesInput        = input.bool(true,          "CVD candles",                      inline = "11", group = GRP1)
+color   upColorInput            = input.color(LIME,         " 🡑",                               inline = "11", group = GRP1)
+color   dnColorInput            = input.color(PINK,         "🡓",                                inline = "11", group = GRP1)
+bool    colorDivBodiesInput     = input.bool(true,          "Color CVD bodies on divergences ", inline = "12", group = GRP1)
+color   upDivColorInput         = input.color(TEAL,         "🡑",                                inline = "12", group = GRP1)
+color   dnDivColorInput         = input.color(MAROON,       "🡓",                                inline = "12", group = GRP1)
+bool    showTotVolInput         = input.bool(false,         "Total volume candle borders",      inline = "13", group = GRP1)
+color   upTotVolColorInput      = input.color(TEAL,         "🡑",                                inline = "13", group = GRP1)
+color   dnTotVolColorInput      = input.color(MAROON,       "🡓",                                inline = "13", group = GRP1)
+int     totVolBodyTranspInput   = input.int(80,             "bodies",                           inline = "13", group = GRP1, minval = 0, maxval = 100, tooltip = TT_TOTVOL)
+bool    showLineInput           = input.bool(false,         "CVD line",                         inline = "14", group = GRP1)
+color   lineUpColorInput        = input.color(LIME,         " 🡑",                               inline = "14", group = GRP1)
+color   lineDnColorInput        = input.color(PINK,         "🡓",                                inline = "14", group = GRP1, tooltip = TT_LINE)
+bool    showMaInput             = input.bool(false,         "CVD MA",                           inline = "15", group = GRP1)
+color   maUpColorInput          = input.color(TEAL,         "  🡑",                              inline = "15", group = GRP1)
+color   maDnColorInput          = input.color(MAROON,       "🡓",                                inline = "15", group = GRP1)
+int     maPeriodInput           = input.int(20,             " Length",                          inline = "15", group = GRP1, minval = 2, tooltip = TT_MA)
+bool    bgDivInput              = input.bool(false,         "Color background on divergences ", inline = "16", group = GRP1)
+color   bgDivColorInput         = input.color(BG_DIV,       "",                                 inline = "16", group = GRP1)
+bool    bgResetInput            = input.bool(true,          "Color background on resets ",      inline = "17", group = GRP1)
+color   bgResetColorInput       = input.color(BG_RESETS,    "",                                 inline = "17", group = GRP1)
+bool    showZeroLineInput       = input.bool(true,         "Zero line",                         inline = "18", group = GRP1)
+bool    showInfoBoxInput        = input.bool(true,          "Show information box ",            group = GRP1)
+string  infoBoxSizeInput        = input.string("small",     "Size ",                            inline = "19", group = GRP1, options = ["tiny", "small", "normal", "large", "huge", "auto"])
+string  infoBoxYPosInput        = input.string("bottom",    "↕",                                inline = "19", group = GRP1, options = ["top", "middle", "bottom"])
+string  infoBoxXPosInput        = input.string("left",      "↔",                                inline = "19", group = GRP1, options = ["left", "center", "right"])
+color   infoBoxColorInput       = input.color(color.gray,   "",                               inline = "19", group = GRP1)
+color   infoBoxTxtColorInput    = input.color(color.white,  "T",                              inline = "19", group = GRP1)
+
+// Divergence Settings
+string  GRP2 = "Divergence Settings"
+bool    showDivergencesInput    = input.bool(true,          "Show Divergences",                 group = GRP2)
+int     pivotLookbackInput      = input.int(5,              "Pivot Lookback",                   group = GRP2, minval = 1, maxval = 50, tooltip = TT_DIV)
+int     maxBarsBackInput        = input.int(100,            "Max Bars Back for Divergence",     group = GRP2, minval = 10, maxval = 500)
+bool    showRegBullInput        = input.bool(true,          "Regular Bullish (positive)",       inline = "d1", group = GRP2)
+color   regBullColorInput       = input.color(BULL_DIV_COLOR, "",                               inline = "d1", group = GRP2)
+bool    showRegBearInput        = input.bool(true,          "Regular Bearish (negative)",       inline = "d2", group = GRP2)
+color   regBearColorInput       = input.color(BEAR_DIV_COLOR, "",                               inline = "d2", group = GRP2)
+bool    showHidBullInput        = input.bool(true,          "Hidden Bullish",                   inline = "d3", group = GRP2)
+color   hidBullColorInput       = input.color(HIDDEN_BULL_COLOR, "",                            inline = "d3", group = GRP2)
+bool    showHidBearInput        = input.bool(true,          "Hidden Bearish",                   inline = "d4", group = GRP2)
+color   hidBearColorInput       = input.color(HIDDEN_BEAR_COLOR, "",                            inline = "d4", group = GRP2)
+int     lineWidthInput          = input.int(2,              "Line Width",                       group = GRP2, minval = 1, maxval = 5)
+bool    showLabelsInput         = input.bool(true,          "Show Labels",                      group = GRP2)
+//#endregion
+
+
+
+//#region ———————————————————— Functions
+
+
+// @function    Determines if the volume for an intrabar is up or down.
+// @returns     ([float, float]) A tuple of two values, one of which contains the bar's volume. `upVol` is the volume of up bars. `dnVol` is the volume of down bars.
+upDnIntrabarVolumes() =>
+    float upVol = 0.0
+    float dnVol = 0.0
+    switch
+        close > open => upVol += volume
+        close < open => dnVol -= volume
+        close > nz(close[1]) => upVol += volume
+        close < nz(close[1]) => dnVol -= volume
+        nz(upVol[1]) > 0 => upVol += volume
+        nz(dnVol[1]) < 0 => dnVol -= volume
+    [upVol, dnVol]
+
+
+// @function    Selects a HTF from the chart's TF.
+// @returns     (simple string) A timeframe string.
+htfStep() =>
+    int tfInMs = timeframe.in_seconds() * 1000
+    string result =
+      switch
+        tfInMs <= MS_IN_MIN       => "60"
+        tfInMs <  MS_IN_HOUR * 3  => "D"
+        tfInMs <= MS_IN_HOUR * 12 => "W"
+        tfInMs <  MS_IN_DAY  * 7  => "M"
+        => "12M"
+
+
+// @function        Determines when a bar opens at a given time.
+timeReset(int hours, int minutes) =>
+    int openTime = timestamp(year, month, dayofmonth, hours, minutes, 0)
+    bool timeInBar = time <= openTime and time_close > openTime
+    bool result = timeframe.isintraday and not timeInBar[1] and timeInBar
+
+
+// @function    Detect pivot low
+// @param src   Source series
+// @param lb    Lookback period
+// @returns     True if pivot low detected
+isPivotLow(float src, int lb) =>
+    ta.pivotlow(src, lb, lb)
+
+
+// @function    Detect pivot high
+// @param src   Source series
+// @param lb    Lookback period
+// @returns     True if pivot high detected
+isPivotHigh(float src, int lb) =>
+    ta.pivothigh(src, lb, lb)
+//#endregion
+
+
+
+//#region ———————————————————— Calculations
+
+
+// Lower timeframe (LTF) used to mine intrabars.
+var string ltfString = PCltf.ltf(ltfModeInput, LTF1, LTF2, LTF3, LTF4, LTF5, LTF6, LTF7, LTF8, LTF9, LTF10)
+
+// Get two arrays, one each for up and dn volumes.
+[upVolumes, dnVolumes] = request.security_lower_tf(syminfo.tickerid, ltfString, upDnIntrabarVolumes())
+
+// Calculate the maximum volumes, total volume, and volume delta.
+float totalUpVolume = nz(upVolumes.sum())
+float totalDnVolume = nz(dnVolumes.sum())
+float maxUpVolume   = nz(upVolumes.max())
+float maxDnVolume   = nz(dnVolumes.min())
+float totalVolume   = totalUpVolume - totalDnVolume
+float delta         = totalUpVolume + totalDnVolume
+float deltaPct      = delta / totalVolume
+
+// Track cumulative volume.
+var float cvd = 0.0
+[reset, trendIsUp, resetDescription] =
+  switch resetInput
+    RST1 => [false, na, "No resets"]
+    RST2 => [timeframe.change(htfStep()), na, "Resets every " + htfStep()]
+    RST3 => [timeframe.change(fixedTfInput), na, "Resets every " + fixedTfInput]
+    RST4 => [timeReset(hourInput, minuteInput), na, str.format("Resets at {0,number,00}:{1,number,00}", hourInput, minuteInput)]
+    RST5 => [session.isfirstbar_regular, na, "Resets at the beginning of the session"]
+    RST6 => [time == chart.left_visible_bar_time, na, "Resets at the beginning of visible bars"]
+    RST7 =>
+        switch trendInput
+            TR01 =>
+                [_, direction] = ta.supertrend(trendValue2Input, trendPeriodInput)
+                [ta.change(direction, 1) != 0, direction == -1, "Resets on Supertrend changes"]
+            TR02 =>
+                [up, dn] = TVta.aroon(trendPeriodInput)
+                [ta.cross(up, dn), ta.crossover(up, dn), "Resets on Aroon changes"]
+            TR03 =>
+                float psar = ta.sar(0.02, 0.02, 0.2)
+                [ta.cross(psar, close), ta.crossunder(psar, close), "Resets on PSAR changes"]
+    => [na, na, na]
+
+if reset
+    cvd := 0
+
+// Build OHLC values for CVD candles.
+bool useVdPct = vdCalcModeInput == VD02
+float barDelta = useVdPct ? deltaPct : delta
+float cvdO = cvd
+float cvdC = cvdO + barDelta
+float cvdH = useVdPct ? math.max(cvdO, cvdC) : cvdO + maxUpVolume
+float cvdL = useVdPct ? math.min(cvdO, cvdC) : cvdO + maxDnVolume
+cvd += barDelta
+
+// MA of CVD
+var float ma = cvd
+var cvdValues = array.new<float>()
+if resetInput == RST1
+    ma := ta.sma(cvdC, maPeriodInput)
+else
+    if reset
+        cvdValues.clear()
+        cvdValues.push(cvd)
+    else
+        cvdValues.push(cvd)
+    ma := cvdValues.avg()
+
+// Total volume level relative to CVD.
+float totalVolumeLevel = cvdO + (totalVolume * math.sign(barDelta))
+
+// ———— Intrabar stats
+[intrabars, chartBarsCovered, avgIntrabars] = PCltf.ltfStats(upVolumes)
+int chartBars = bar_index + 1
+
+// Detect errors.
+if resetInput == RST3 and timeframe.in_seconds(fixedTfInput) <= timeframe.in_seconds()
+    runtime.error("The higher timeframe for resets must be greater than the chart's timeframe.")
+else if resetInput == RST4 and not timeframe.isintraday
+    runtime.error("Resets at a fixed time work on intraday charts only.")
+else if ta.cum(totalVolume) == 0 and barstate.islast
+    runtime.error("No volume is provided by the data vendor.")
+else if ta.cum(intrabars) == 0 and barstate.islast
+    runtime.error("No intrabar information exists at the '" + ltfString + "' timeframe.")
+
+// Detect divergences between volume delta and the bar's polarity.
+bool divergence = delta != 0 and math.sign(delta) != math.sign(close - open)
+//#endregion
+
+
+
+//#region ———————————————————— Divergence Detection
+
+
+// Pivot detection for price and CVD
+float pricePivotLow  = ta.pivotlow(low, pivotLookbackInput, pivotLookbackInput)
+float pricePivotHigh = ta.pivothigh(high, pivotLookbackInput, pivotLookbackInput)
+float cvdPivotLow    = ta.pivotlow(cvdC, pivotLookbackInput, pivotLookbackInput)
+float cvdPivotHigh   = ta.pivothigh(cvdC, pivotLookbackInput, pivotLookbackInput)
+
+// Arrays to store pivot information
+var array<int>   priceLowBars    = array.new<int>()
+var array<float> priceLowValues  = array.new<float>()
+var array<int>   priceHighBars   = array.new<int>()
+var array<float> priceHighValues = array.new<float>()
+var array<int>   cvdLowBars      = array.new<int>()
+var array<float> cvdLowValues    = array.new<float>()
+var array<int>   cvdHighBars     = array.new<int>()
+var array<float> cvdHighValues   = array.new<float>()
+
+// Store pivot lows
+if not na(pricePivotLow)
+    array.push(priceLowBars, bar_index - pivotLookbackInput)
+    array.push(priceLowValues, pricePivotLow)
+    // Keep array size manageable
+    if array.size(priceLowBars) > 50
+        array.shift(priceLowBars)
+        array.shift(priceLowValues)
+
+if not na(cvdPivotLow)
+    array.push(cvdLowBars, bar_index - pivotLookbackInput)
+    array.push(cvdLowValues, cvdPivotLow)
+    if array.size(cvdLowBars) > 50
+        array.shift(cvdLowBars)
+        array.shift(cvdLowValues)
+
+// Store pivot highs
+if not na(pricePivotHigh)
+    array.push(priceHighBars, bar_index - pivotLookbackInput)
+    array.push(priceHighValues, pricePivotHigh)
+    if array.size(priceHighBars) > 50
+        array.shift(priceHighBars)
+        array.shift(priceHighValues)
+
+if not na(cvdPivotHigh)
+    array.push(cvdHighBars, bar_index - pivotLookbackInput)
+    array.push(cvdHighValues, cvdPivotHigh)
+    if array.size(cvdHighBars) > 50
+        array.shift(cvdHighBars)
+        array.shift(cvdHighValues)
+
+
+// Function to find matching pivot for divergence
+findDivergence(array<int> priceBars, array<float> priceValues, array<int> cvdBars, array<float> cvdValues, bool isLow, bool isRegular) =>
+    int resultBar1 = na
+    int resultBar2 = na
+    float resultPrice1 = na
+    float resultPrice2 = na
+    float resultCvd1 = na
+    float resultCvd2 = na
+    bool found = false
+
+    int priceSize = array.size(priceBars)
+    int cvdSize = array.size(cvdBars)
+
+    if priceSize >= 2 and cvdSize >= 2
+        // Get the most recent pivot
+        int latestPriceBar = array.get(priceBars, priceSize - 1)
+        float latestPriceVal = array.get(priceValues, priceSize - 1)
+
+        // Find corresponding CVD pivot (closest in bar index)
+        int closestCvdIdx = -1
+        int minDiff = 999999
+        for i = cvdSize - 1 to 0
+            int cvdBar = array.get(cvdBars, i)
+            int diff = math.abs(cvdBar - latestPriceBar)
+            if diff < minDiff and diff <= pivotLookbackInput
+                minDiff := diff
+                closestCvdIdx := i
+
+        if closestCvdIdx >= 0
+            float latestCvdVal = array.get(cvdValues, closestCvdIdx)
+            int latestCvdBar = array.get(cvdBars, closestCvdIdx)
+
+            // Look for previous pivot to compare
+            for i = priceSize - 2 to 0
+                int prevPriceBar = array.get(priceBars, i)
+                float prevPriceVal = array.get(priceValues, i)
+
+                // Check if within max bars back
+                if latestPriceBar - prevPriceBar > maxBarsBackInput
+                    break
+
+                // Find corresponding previous CVD pivot
+                for j = closestCvdIdx - 1 to 0
+                    int prevCvdBar = array.get(cvdBars, j)
+                    float prevCvdVal = array.get(cvdValues, j)
+
+                    // Check proximity
+                    if math.abs(prevCvdBar - prevPriceBar) <= pivotLookbackInput * 2
+                        // Check divergence conditions
+                        if isLow
+                            if isRegular
+                                // Regular Bullish: Price makes lower low, CVD makes higher low
+                                if latestPriceVal < prevPriceVal and latestCvdVal > prevCvdVal
+                                    resultBar1 := prevPriceBar
+                                    resultBar2 := latestPriceBar
+                                    resultPrice1 := prevPriceVal
+                                    resultPrice2 := latestPriceVal
+                                    resultCvd1 := prevCvdVal
+                                    resultCvd2 := latestCvdVal
+                                    found := true
+                                    break
+                            else
+                                // Hidden Bullish: Price makes higher low, CVD makes lower low
+                                if latestPriceVal > prevPriceVal and latestCvdVal < prevCvdVal
+                                    resultBar1 := prevPriceBar
+                                    resultBar2 := latestPriceBar
+                                    resultPrice1 := prevPriceVal
+                                    resultPrice2 := latestPriceVal
+                                    resultCvd1 := prevCvdVal
+                                    resultCvd2 := latestCvdVal
+                                    found := true
+                                    break
+                        else
+                            if isRegular
+                                // Regular Bearish: Price makes higher high, CVD makes lower high
+                                if latestPriceVal > prevPriceVal and latestCvdVal < prevCvdVal
+                                    resultBar1 := prevPriceBar
+                                    resultBar2 := latestPriceBar
+                                    resultPrice1 := prevPriceVal
+                                    resultPrice2 := latestPriceVal
+                                    resultCvd1 := prevCvdVal
+                                    resultCvd2 := latestCvdVal
+                                    found := true
+                                    break
+                            else
+                                // Hidden Bearish: Price makes lower high, CVD makes higher high
+                                if latestPriceVal < prevPriceVal and latestCvdVal > prevCvdVal
+                                    resultBar1 := prevPriceBar
+                                    resultBar2 := latestPriceBar
+                                    resultPrice1 := prevPriceVal
+                                    resultPrice2 := latestPriceVal
+                                    resultCvd1 := prevCvdVal
+                                    resultCvd2 := latestCvdVal
+                                    found := true
+                                    break
+
+                if found
+                    break
+
+    [found, resultBar1, resultBar2, resultCvd1, resultCvd2]
+
+
+// Detect divergences when new pivots form
+var line regBullLine = na
+var line regBearLine = na
+var line hidBullLine = na
+var line hidBearLine = na
+var label regBullLabel = na
+var label regBearLabel = na
+var label hidBullLabel = na
+var label hidBearLabel = na
+
+if showDivergencesInput and not na(pricePivotLow) and not na(cvdPivotLow)
+    // Check for Regular Bullish Divergence
+    if showRegBullInput
+        [foundRegBull, bar1RegBull, bar2RegBull, cvd1RegBull, cvd2RegBull] = findDivergence(priceLowBars, priceLowValues, cvdLowBars, cvdLowValues, true, true)
+        if foundRegBull
+            regBullLine := line.new(bar1RegBull, cvd1RegBull, bar2RegBull, cvd2RegBull, color = regBullColorInput, width = lineWidthInput, style = line.style_solid)
+            if showLabelsInput
+                regBullLabel := label.new(bar2RegBull, cvd2RegBull, "Bull", style = label.style_label_up, color = regBullColorInput, textcolor = color.white, size = size.small)
+
+    // Check for Hidden Bullish Divergence
+    if showHidBullInput
+        [foundHidBull, bar1HidBull, bar2HidBull, cvd1HidBull, cvd2HidBull] = findDivergence(priceLowBars, priceLowValues, cvdLowBars, cvdLowValues, true, false)
+        if foundHidBull
+            hidBullLine := line.new(bar1HidBull, cvd1HidBull, bar2HidBull, cvd2HidBull, color = hidBullColorInput, width = lineWidthInput, style = line.style_dashed)
+            if showLabelsInput
+                hidBullLabel := label.new(bar2HidBull, cvd2HidBull, "H.Bull", style = label.style_label_up, color = hidBullColorInput, textcolor = color.white, size = size.small)
+
+if showDivergencesInput and not na(pricePivotHigh) and not na(cvdPivotHigh)
+    // Check for Regular Bearish Divergence
+    if showRegBearInput
+        [foundRegBear, bar1RegBear, bar2RegBear, cvd1RegBear, cvd2RegBear] = findDivergence(priceHighBars, priceHighValues, cvdHighBars, cvdHighValues, false, true)
+        if foundRegBear
+            regBearLine := line.new(bar1RegBear, cvd1RegBear, bar2RegBear, cvd2RegBear, color = regBearColorInput, width = lineWidthInput, style = line.style_solid)
+            if showLabelsInput
+                regBearLabel := label.new(bar2RegBear, cvd2RegBear, "Bear", style = label.style_label_down, color = regBearColorInput, textcolor = color.white, size = size.small)
+
+    // Check for Hidden Bearish Divergence
+    if showHidBearInput
+        [foundHidBear, bar1HidBear, bar2HidBear, cvd1HidBear, cvd2HidBear] = findDivergence(priceHighBars, priceHighValues, cvdHighBars, cvdHighValues, false, false)
+        if foundHidBear
+            hidBearLine := line.new(bar1HidBear, cvd1HidBear, bar2HidBear, cvd2HidBear, color = hidBearColorInput, width = lineWidthInput, style = line.style_dashed)
+            if showLabelsInput
+                hidBearLabel := label.new(bar2HidBear, cvd2HidBear, "H.Bear", style = label.style_label_down, color = hidBearColorInput, textcolor = color.white, size = size.small)
+//#endregion
+
+
+
+//#region ———————————————————— Visuals
+
+
+color candleColor = delta > 0 ? colorDivBodiesInput and divergence ? upDivColorInput : upColorInput : colorDivBodiesInput and divergence ? dnDivColorInput : dnColorInput
+color totVolCandleColor = delta > 0 ? upTotVolColorInput : dnTotVolColorInput
+
+// Display key values in indicator values and Data Window.
+displayLocation = display.data_window
+plot(delta,             "Volume delta for the bar",     candleColor,  display = displayLocation)
+plot(totalUpVolume,     "Up volume for the bar",        upColorInput, display = displayLocation)
+plot(totalDnVolume,     "Dn volume for the bar",        dnColorInput, display = displayLocation)
+plot(totalVolume,       "Total volume",                 display = displayLocation)
+plot(na,                "═════════════════",            display = displayLocation)
+plot(cvdO,              "CVD before this bar",          display = displayLocation)
+plot(cvdC,              "CVD after this bar",           display = displayLocation)
+plot(maxUpVolume,       "Max intrabar up volume",       upColorInput, display = displayLocation)
+plot(maxDnVolume,       "Max intrabar dn volume",       dnColorInput, display = displayLocation)
+plot(intrabars,         "Intrabars in this bar",        display = displayLocation)
+plot(avgIntrabars,      "Average intrabars",            display = displayLocation)
+plot(chartBarsCovered,  "Chart bars covered",           display = displayLocation)
+plot(bar_index + 1,     "Chart bars",                   display = displayLocation)
+plot(na,                "═════════════════",            display = displayLocation)
+
+// Total volume boxes.
+[totalVolO, totalVolH, totalVolL, totalVolC] = if showTotVolInput and not useVdPct
+    [cvdO, math.max(cvdO, totalVolumeLevel), math.min(cvdO, totalVolumeLevel), totalVolumeLevel]
+else
+    [na, na, na, na]
+plotcandle(totalVolO, totalVolH, totalVolL, totalVolC, "CVD", color = color.new(totVolCandleColor, totVolBodyTranspInput), wickcolor = totVolCandleColor, bordercolor = totVolCandleColor)
+
+// CVD candles.
+plotcandle(showCandlesInput ? cvdO : na, cvdH, cvdL, cvdC, "CVD", color = candleColor, wickcolor = candleColor, bordercolor = candleColor)
+
+// CVD line.
+plot(showLineInput ? cvdC : na, "CVD line", cvdC > 0 ? lineUpColorInput : lineDnColorInput)
+
+// CVD MA.
+plot(showMaInput ? ma : na, "CVD MA", reset ? na : ma > 0 ? maUpColorInput : maDnColorInput)
+
+// Zero line.
+hline(showZeroLineInput ? 0 : na, "Zero", GRAY, hline.style_dotted)
+
+// Up/Dn arrow used when resets occur on trend changes.
+plotchar(reset and not na(trendIsUp) ? trendIsUp     : na, "Up trend", "▲", location.top, upColorInput)
+plotchar(reset and not na(trendIsUp) ? not trendIsUp : na, "Dn trend", "▼", location.top, dnColorInput)
+
+// Background on resets and divergences.
+bgcolor(bgResetInput and reset ? bgResetColorInput : bgDivInput and divergence ? bgDivColorInput : na)
+
+// Divergence markers on CVD
+plotshape(showDivergencesInput and showRegBullInput and not na(pricePivotLow) ? cvdPivotLow : na, "Regular Bullish Pivot", shape.circle, location.absolute, regBullColorInput, offset = -pivotLookbackInput, size = size.tiny)
+plotshape(showDivergencesInput and showRegBearInput and not na(pricePivotHigh) ? cvdPivotHigh : na, "Regular Bearish Pivot", shape.circle, location.absolute, regBearColorInput, offset = -pivotLookbackInput, size = size.tiny)
+
+// Display information box only once on the last historical bar.
+if showInfoBoxInput and barstate.islastconfirmedhistory
+    var table infoBox = table.new(infoBoxYPosInput + "_" + infoBoxXPosInput, 1, 1)
+    color infoBoxBgColor = infoBoxColorInput
+    string txt = str.format("{0}\nUses intrabars at {1}\nAvg intrabars per chart bar: {2,number,#.##}\nChart bars covered: {3} / {4} ({5,number,percent})",
+      resetDescription, PCtime.formattedNoOfPeriods(timeframe.in_seconds(ltfString) * 1000),
+      avgIntrabars, chartBarsCovered, bar_index + 1, chartBarsCovered / (bar_index + 1))
+    if avgIntrabars < 5
+        txt += "\nThis quantity of intrabars is dangerously small.\nResults will not be as reliable with so few."
+        infoBoxBgColor := color.red
+    txt += "\n─────────────────\nDivergence Detection: " + (showDivergencesInput ? "ON" : "OFF")
+    table.cell(infoBox, 0, 0, txt, text_color = infoBoxTxtColorInput, text_size = infoBoxSizeInput, bgcolor = infoBoxBgColor)
+//#endregion
