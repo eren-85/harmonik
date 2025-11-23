@@ -1,0 +1,274 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © NoveltyTrade - Modified with Divergence Detection
+
+//@version=5
+indicator('Cumulative Volume Delta (CVD) with Divergences', 'CVD Divergences', false, format.volume, max_lines_count = 500, max_labels_count = 500)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CVD SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+color   cvdColorInput       = input.color(color.orange, "CVD Line Color", group = "CVD Settings")
+int     cvdLineWidthInput   = input.int(2, "CVD Line Width", minval = 1, maxval = 5, group = "CVD Settings")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+string  GRP_DIV = "Divergence Settings"
+bool    showDivInput        = input.bool(true, "Show Divergences", group = GRP_DIV)
+int     pivotLbInput        = input.int(5, "Pivot Lookback", minval = 1, maxval = 50, group = GRP_DIV, tooltip = "Pivot tespiti için geriye bakış periyodu")
+int     maxBarsInput        = input.int(100, "Max Bars Back", minval = 10, maxval = 500, group = GRP_DIV, tooltip = "Uyumsuzluk aranacak maksimum bar sayısı")
+
+// Regular Divergences
+bool    showRegBullInput    = input.bool(true, "Regular Bullish (Pozitif)", inline = "rb", group = GRP_DIV)
+color   regBullColInput     = input.color(#00E676, "", inline = "rb", group = GRP_DIV)
+bool    showRegBearInput    = input.bool(true, "Regular Bearish (Negatif)", inline = "rbe", group = GRP_DIV)
+color   regBearColInput     = input.color(#FF5252, "", inline = "rbe", group = GRP_DIV)
+
+// Hidden Divergences
+bool    showHidBullInput    = input.bool(true, "Hidden Bullish (Gizli Pozitif)", inline = "hb", group = GRP_DIV)
+color   hidBullColInput     = input.color(#00BCD4, "", inline = "hb", group = GRP_DIV)
+bool    showHidBearInput    = input.bool(true, "Hidden Bearish (Gizli Negatif)", inline = "hbe", group = GRP_DIV)
+color   hidBearColInput     = input.color(#FF9800, "", inline = "hbe", group = GRP_DIV)
+
+int     divLineWidthInput   = input.int(2, "Line Width", minval = 1, maxval = 5, group = GRP_DIV)
+bool    showLabelsInput     = input.bool(true, "Show Labels", group = GRP_DIV)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CVD CALCULATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+cvd(_c, _o, _v) =>
+    var tcvd = 0.0,        delta = 0.0
+    posV     = 0.0,        negV  = 0.0
+    totUV    = 0.0,        totDV = 0.0
+    switch
+        _c > _o         => posV += _v
+        _c < _o         => negV -= _v
+        _c > nz(_c[1])  => posV += _v
+        _c < nz(_c[1])  => negV -= _v
+        nz(posV[1]) > 0 => posV += _v
+        nz(negV[1]) < 0 => negV -= _v
+    totUV               += posV
+    totDV               += negV
+    delta               := totUV + totDV
+    cvdVal              = tcvd + delta
+    tcvd                += delta
+    cvdVal
+
+tfs = timeframe.in_seconds()
+tf  = switch
+    tfs <=     60       => '1S'         // 1 min
+    tfs <=    300       => '15S'        // 5 min
+    tfs <=    900       => '30S'        // 15 min
+    tfs <=   3600       => '1'          // 1 h
+    tfs <=  14400       => '5'          // 4 h
+    tfs <=  43200       => '15'         // 12 h
+    tfs <=  86400       => '60'         // 1 d
+    tfs <= 259200       => '120'        // 3 d
+    tfs <= 604800       => '240'        // 1 w
+
+if tfs > 605000
+    runtime.error('Daha düşük zaman dilimi kullanın')
+
+cvdValue = request.security(syminfo.tickerid, tf, cvd(close, open, volume))
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Pivot Detection
+pricePivotLow   = ta.pivotlow(low, pivotLbInput, pivotLbInput)
+pricePivotHigh  = ta.pivothigh(high, pivotLbInput, pivotLbInput)
+cvdPivotLow     = ta.pivotlow(cvdValue, pivotLbInput, pivotLbInput)
+cvdPivotHigh    = ta.pivothigh(cvdValue, pivotLbInput, pivotLbInput)
+
+// Arrays for storing pivots
+var array<int>   priceLowBars    = array.new<int>()
+var array<float> priceLowVals    = array.new<float>()
+var array<int>   priceHighBars   = array.new<int>()
+var array<float> priceHighVals   = array.new<float>()
+var array<int>   cvdLowBars      = array.new<int>()
+var array<float> cvdLowVals      = array.new<float>()
+var array<int>   cvdHighBars     = array.new<int>()
+var array<float> cvdHighVals     = array.new<float>()
+
+// Store Price Pivot Lows
+if not na(pricePivotLow)
+    array.push(priceLowBars, bar_index - pivotLbInput)
+    array.push(priceLowVals, pricePivotLow)
+    if array.size(priceLowBars) > 50
+        array.shift(priceLowBars)
+        array.shift(priceLowVals)
+
+// Store Price Pivot Highs
+if not na(pricePivotHigh)
+    array.push(priceHighBars, bar_index - pivotLbInput)
+    array.push(priceHighVals, pricePivotHigh)
+    if array.size(priceHighBars) > 50
+        array.shift(priceHighBars)
+        array.shift(priceHighVals)
+
+// Store CVD Pivot Lows
+if not na(cvdPivotLow)
+    array.push(cvdLowBars, bar_index - pivotLbInput)
+    array.push(cvdLowVals, cvdPivotLow)
+    if array.size(cvdLowBars) > 50
+        array.shift(cvdLowBars)
+        array.shift(cvdLowVals)
+
+// Store CVD Pivot Highs
+if not na(cvdPivotHigh)
+    array.push(cvdHighBars, bar_index - pivotLbInput)
+    array.push(cvdHighVals, cvdPivotHigh)
+    if array.size(cvdHighBars) > 50
+        array.shift(cvdHighBars)
+        array.shift(cvdHighVals)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE FINDER FUNCTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+findDivergence(array<int> pBars, array<float> pVals, array<int> cBars, array<float> cVals, bool isLow, bool isRegular) =>
+    int     resBar1     = na
+    int     resBar2     = na
+    float   resCvd1     = na
+    float   resCvd2     = na
+    bool    found       = false
+
+    int pSize = array.size(pBars)
+    int cSize = array.size(cBars)
+
+    if pSize >= 2 and cSize >= 2
+        int     latestPBar  = array.get(pBars, pSize - 1)
+        float   latestPVal  = array.get(pVals, pSize - 1)
+
+        // Find closest CVD pivot
+        int closestIdx = -1
+        int minDiff = 999999
+        for i = cSize - 1 to 0
+            int cBar = array.get(cBars, i)
+            int diff = math.abs(cBar - latestPBar)
+            if diff < minDiff and diff <= pivotLbInput
+                minDiff := diff
+                closestIdx := i
+
+        if closestIdx >= 0
+            float   latestCVal  = array.get(cVals, closestIdx)
+            int     latestCBar  = array.get(cBars, closestIdx)
+
+            // Look for previous pivot
+            for i = pSize - 2 to 0
+                int     prevPBar    = array.get(pBars, i)
+                float   prevPVal    = array.get(pVals, i)
+
+                if latestPBar - prevPBar > maxBarsInput
+                    break
+
+                // Find matching CVD pivot
+                for j = closestIdx - 1 to 0
+                    int     prevCBar    = array.get(cBars, j)
+                    float   prevCVal    = array.get(cVals, j)
+
+                    if math.abs(prevCBar - prevPBar) <= pivotLbInput * 2
+                        // Check divergence conditions
+                        if isLow
+                            if isRegular
+                                // Regular Bullish: Price ↓ Lower Low, CVD ↑ Higher Low
+                                if latestPVal < prevPVal and latestCVal > prevCVal
+                                    resBar1 := prevCBar
+                                    resBar2 := latestCBar
+                                    resCvd1 := prevCVal
+                                    resCvd2 := latestCVal
+                                    found := true
+                                    break
+                            else
+                                // Hidden Bullish: Price ↑ Higher Low, CVD ↓ Lower Low
+                                if latestPVal > prevPVal and latestCVal < prevCVal
+                                    resBar1 := prevCBar
+                                    resBar2 := latestCBar
+                                    resCvd1 := prevCVal
+                                    resCvd2 := latestCVal
+                                    found := true
+                                    break
+                        else
+                            if isRegular
+                                // Regular Bearish: Price ↑ Higher High, CVD ↓ Lower High
+                                if latestPVal > prevPVal and latestCVal < prevCVal
+                                    resBar1 := prevCBar
+                                    resBar2 := latestCBar
+                                    resCvd1 := prevCVal
+                                    resCvd2 := latestCVal
+                                    found := true
+                                    break
+                            else
+                                // Hidden Bearish: Price ↓ Lower High, CVD ↑ Higher High
+                                if latestPVal < prevPVal and latestCVal > prevCVal
+                                    resBar1 := prevCBar
+                                    resBar2 := latestCBar
+                                    resCvd1 := prevCVal
+                                    resCvd2 := latestCVal
+                                    found := true
+                                    break
+                        break
+
+                if found
+                    break
+
+    [found, resBar1, resBar2, resCvd1, resCvd2]
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DRAW DIVERGENCES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Check for bullish divergences (on pivot lows)
+if showDivInput and not na(pricePivotLow) and not na(cvdPivotLow)
+
+    // Regular Bullish
+    if showRegBullInput
+        [foundRB, bar1RB, bar2RB, cvd1RB, cvd2RB] = findDivergence(priceLowBars, priceLowVals, cvdLowBars, cvdLowVals, true, true)
+        if foundRB
+            line.new(bar1RB, cvd1RB, bar2RB, cvd2RB, color = regBullColInput, width = divLineWidthInput, style = line.style_solid)
+            if showLabelsInput
+                label.new(bar2RB, cvd2RB, "Bull", style = label.style_label_up, color = regBullColInput, textcolor = color.white, size = size.small)
+
+    // Hidden Bullish
+    if showHidBullInput
+        [foundHB, bar1HB, bar2HB, cvd1HB, cvd2HB] = findDivergence(priceLowBars, priceLowVals, cvdLowBars, cvdLowVals, true, false)
+        if foundHB
+            line.new(bar1HB, cvd1HB, bar2HB, cvd2HB, color = hidBullColInput, width = divLineWidthInput, style = line.style_dashed)
+            if showLabelsInput
+                label.new(bar2HB, cvd2HB, "H.Bull", style = label.style_label_up, color = hidBullColInput, textcolor = color.white, size = size.small)
+
+// Check for bearish divergences (on pivot highs)
+if showDivInput and not na(pricePivotHigh) and not na(cvdPivotHigh)
+
+    // Regular Bearish
+    if showRegBearInput
+        [foundRBe, bar1RBe, bar2RBe, cvd1RBe, cvd2RBe] = findDivergence(priceHighBars, priceHighVals, cvdHighBars, cvdHighVals, false, true)
+        if foundRBe
+            line.new(bar1RBe, cvd1RBe, bar2RBe, cvd2RBe, color = regBearColInput, width = divLineWidthInput, style = line.style_solid)
+            if showLabelsInput
+                label.new(bar2RBe, cvd2RBe, "Bear", style = label.style_label_down, color = regBearColInput, textcolor = color.white, size = size.small)
+
+    // Hidden Bearish
+    if showHidBearInput
+        [foundHBe, bar1HBe, bar2HBe, cvd1HBe, cvd2HBe] = findDivergence(priceHighBars, priceHighVals, cvdHighBars, cvdHighVals, false, false)
+        if foundHBe
+            line.new(bar1HBe, cvd1HBe, bar2HBe, cvd2HBe, color = hidBearColInput, width = divLineWidthInput, style = line.style_dashed)
+            if showLabelsInput
+                label.new(bar2HBe, cvd2HBe, "H.Bear", style = label.style_label_down, color = hidBearColInput, textcolor = color.white, size = size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLOT CVD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+plot(cvdValue, 'CVD', cvdColorInput, cvdLineWidthInput)
+
+// Zero Line
+hline(0, "Zero", color.gray, hline.style_dotted)
+
+// Pivot markers
+plotshape(showDivInput and not na(cvdPivotLow) ? cvdPivotLow : na, "CVD Pivot Low", shape.circle, location.absolute, color.new(regBullColInput, 50), offset = -pivotLbInput, size = size.tiny)
+plotshape(showDivInput and not na(cvdPivotHigh) ? cvdPivotHigh : na, "CVD Pivot High", shape.circle, location.absolute, color.new(regBearColInput, 50), offset = -pivotLbInput, size = size.tiny)
